@@ -1,0 +1,58 @@
+"""Stories written in the tagged format (for example by Grok or ChatGPT) skip the LLM step."""
+
+from pathlib import Path
+
+from core import story, tagger, voices
+
+TAGGED = (Path(__file__).parent.parent / "examples" / "the-lighthouse-tagged.txt").read_text()
+PLAIN = (Path(__file__).parent.parent / "examples" / "the-lighthouse.txt").read_text()
+
+
+def test_detects_tagged_and_plain():
+    assert story.is_tagged(TAGGED)
+    assert not story.is_tagged(PLAIN)
+
+
+def test_parse_tagged():
+    d = story.parse_any(TAGGED, "The Lighthouse")
+    assert d["pretagged"]
+    assert [c["title"] for c in d["chapters"]] == ["Chapter 1: The Light Goes Out", "Chapter 2: The Climb"]
+    assert d["characters"]["Mira"] == {"gender": "female", "age": "child", "description": "British"}
+    assert d["characters"]["Tom"]["gender"] == "male"
+    assert "Cornish" in d["characters"]["Tom"]["description"]
+    by_text = {s["text"]: s for s in d["segments"] if s["text"]}
+    whisper = by_text["In this?"]
+    assert (whisper["speaker"], whisper["kind"], whisper["emotion"]) == ("Mira", "dialogue", "whisper")
+    panicked = by_text["It's gone out! Grandpa, the light's gone out!"]
+    assert panicked["emotion"] == "fearful" and panicked["intensity"] >= 0.8
+    assert by_text["Then we'd best go and light it again."]["speaker"] == "Tom"
+    narration = by_text[[t for t in by_text if t.startswith("The storm")][0]]
+    assert (narration["speaker"], narration["emotion"]) == ("Narrator", "tense")
+    pauses = [s for s in d["segments"] if s["kind"] == "pause"]
+    assert [p["seconds"] for p in pauses] == [1.5]
+    # No tag text is read aloud
+    assert not any("[" in s["text"] or "|" in s["text"] for s in d["segments"])
+
+
+def test_lines_without_tags_are_narration():
+    text = "[NARRATOR | calm] One.\n[BOB | angry] Two!\nJust a plain line.\n[PAUSE]"
+    d = story.parse_tagged(text, "T")
+    assert [(s["kind"], s["speaker"]) for s in d["segments"]] == [
+        ("narration", "Narrator"), ("dialogue", "Bob"), ("narration", "Narrator"), ("pause", "Narrator")]
+    assert d["segments"][3]["seconds"] == 1.0
+
+
+def test_feeling_words():
+    assert tagger.feeling("scared, whispering") == ("whisper", 0.6)
+    assert tagger.feeling("very angry, shouting")[0] == "angry"
+    assert tagger.feeling("calm, ominous")[0] == "tense"
+    assert tagger.feeling("calm") == ("neutral", 0.5)
+    assert tagger.feeling("slightly amused") == ("amused", 0.35)
+
+
+def test_cast_hints_pick_accent():
+    chars = {"Tom": {"gender": "male", "description": "Cornish", "lines": 3},
+             "Mira": {"gender": "female", "description": "American", "lines": 4}}
+    voices.auto_cast(chars, "chatterbox:default", ["af_bella", "am_adam", "bf_emma", "bm_george"])
+    assert chars["Tom"]["voice"] == "kokoro:bm_george"
+    assert chars["Mira"]["voice"] == "kokoro:af_bella"

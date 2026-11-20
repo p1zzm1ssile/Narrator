@@ -1,0 +1,8 @@
+# torch and torchaudio are installed first in the Dockerfile, from PyTorch's CUDA index
+chatterbox-tts==0.1.7
+faster-whisper==1.2.1
+fastapi==0.163.2
+uvicorn==0.54.0
+python-multipart==0.0.34
+requests>=2.32
+soundfile>=0.12
