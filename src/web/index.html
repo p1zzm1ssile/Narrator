@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Narrator</title>
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <h1><img src="icon.svg" alt="" width="28" height="28"> Narrator</h1>
+    <nav>
+      <button data-tab="stories" class="active">Stories</button>
+      <button data-tab="voices">Voices</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+    <span id="gpu" class="muted"></span>
+  </header>
+
+  <main>
+    <!-- Stories -->
+    <section id="tab-stories">
+      <div class="card">
+        <h2>New story</h2>
+        <form id="new-story">
+          <div class="row">
+            <label>Title <input name="title" placeholder="Taken from the file name if empty"></label>
+            <label>Author <input name="author"></label>
+            <label>Format
+              <select name="format"><option value="">From settings</option><option value="m4b">M4B audiobook</option><option value="mp3">MP3</option></select>
+            </label>
+          </div>
+          <label>Story file (.txt or .md) <input type="file" name="file" accept=".txt,.md,.markdown,text/plain"></label>
+          <label>or paste the text <textarea name="text" rows="6" placeholder="Chapter 1&#10;&#10;&quot;Where are you going?&quot; asked Mira."></textarea></label>
+          <p class="muted">Lines like <code>Chapter 1</code>, <code>Prologue</code> or <code># Heading</code> start new chapters. Dialogue in quotes gets the character's voice.</p>
+          <button type="submit" class="primary">Start</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Your stories</h2>
+        <div id="job-list" class="muted">Nothing yet.</div>
+      </div>
+    </section>
+
+    <!-- One story -->
+    <section id="tab-job" hidden>
+      <button class="link" id="back">&larr; All stories</button>
+      <div class="card">
+        <h2 id="job-title"></h2>
+        <p id="job-message"></p>
+        <progress id="job-progress" max="1" value="0"></progress>
+        <div class="row actions" id="job-actions"></div>
+        <audio id="job-audio" controls hidden></audio>
+      </div>
+      <div class="card" id="cast-card" hidden>
+        <h2>Cast</h2>
+        <p class="muted">Pick a voice for each character. Press play to hear their first line in that voice.</p>
+        <table id="cast"><thead><tr><th>Character</th><th>Lines</th><th>Gender</th><th>Voice</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="card" id="lines-card" hidden>
+        <h2>Lines</h2>
+        <p class="muted">Fix any line given to the wrong person or with the wrong feeling. Changes are saved when you press Save or Render.</p>
+        <label class="inline">Chapter <select id="chapter-filter"></select></label>
+        <label class="inline"><input type="checkbox" id="dialogue-only"> Dialogue only</label>
+        <table id="lines"><thead><tr><th>Who</th><th>Feeling</th><th>Strength</th><th>Text</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- Voices -->
+    <section id="tab-voices" hidden>
+      <div class="card">
+        <h2>Voices</h2>
+        <p class="muted">Press play to hear each voice read the same few lines. <b>Expressive</b> voices are Chatterbox, which acts out feelings and copies voices you add below. <b>Fast</b> voices are your Kokoro. The first sample of a voice takes a moment to make, then it's kept.</p>
+        <div class="row filters">
+          <label>Search <input id="voice-search" placeholder="Name or accent"></label>
+          <label>Gender <select id="voice-gender"><option value="">Any</option><option>female</option><option>male</option></select></label>
+          <label>Kind <select id="voice-kind"><option value="">Both</option><option value="chatterbox">Expressive (Chatterbox)</option><option value="kokoro">Fast (Kokoro)</option></select></label>
+          <label class="inline check"><input type="checkbox" id="voice-english" checked> English voices only</label>
+        </div>
+        <p id="narrator-now" class="muted"></p>
+        <div id="voice-grid" class="grid"></div>
+        <p id="kokoro-missing" class="muted" hidden>Kokoro isn't connected. Add its address in Settings to see its voices here.</p>
+      </div>
+      <div class="card">
+        <h2>Try a line</h2>
+        <div class="row">
+          <label>Voice <select id="try-voice"></select></label>
+          <label>Feeling <select id="try-emotion"></select></label>
+          <label>Strength <input type="range" id="try-intensity" min="0" max="1" step="0.1" value="0.6"></label>
+        </div>
+        <label>Line <input id="try-text" value="I told you not to open that door. Now look what you've done!"></label>
+        <button id="try-go" class="primary">Speak</button> <span id="try-status" class="muted"></span>
+        <audio id="try-audio" controls hidden></audio>
+        <p class="muted">Feelings change Chatterbox voices the most. Kokoro voices only speed up or slow down.</p>
+      </div>
+      <div class="card">
+        <h2>Add a voice</h2>
+        <p class="muted">Upload 10 to 20 seconds of one person speaking clearly, with no music or background noise. Chatterbox copies the voice, and it appears above as an expressive voice. Only use voices you have the right to use.</p>
+        <form id="new-voice">
+          <div class="row">
+            <label>Name <input name="name" required></label>
+            <label>Gender <select name="gender"><option>female</option><option>male</option><option>unknown</option></select></label>
+            <label>Description <input name="description" placeholder="Warm, older, Scottish"></label>
+          </div>
+          <label>Audio clip <input type="file" name="file" accept="audio/*,video/*" required></label>
+          <button type="submit" class="primary">Add voice</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="tab-settings" hidden>
+      <form id="settings">
+        <div class="card">
+          <h2>LLM (who says what, and how)</h2>
+          <div class="row">
+            <label>Ollama address <input name="ollama_url" placeholder="http://192.168.1.10:11434"></label>
+            <label>Model <input name="ollama_model" placeholder="qwen2.5:7b"></label>
+          </div>
+          <button type="button" data-test="ollama">Test</button> <span class="test-result" data-for="ollama"></span>
+          <p class="muted">Without it, speakers are guessed from "said Mira" style tags. A 7B to 14B model works well. On an 8 GB card, run Ollama on the CPU or let Narrator unload Chatterbox between steps.</p>
+        </div>
+        <div class="card">
+          <h2>Voices</h2>
+          <div class="row">
+            <label>Kokoro address <input name="kokoro_url" placeholder="http://192.168.1.10:8880"></label>
+            <label>Narrator voice <select name="narrator_voice"></select></label>
+            <label>Device <select name="tts_device"><option>auto</option><option>cuda</option><option>cpu</option></select></label>
+          </div>
+          <button type="button" data-test="kokoro">Test</button> <span class="test-result" data-for="kokoro"></span>
+          <div class="row">
+            <label>Narrator expressiveness <input name="narrator_expressiveness" type="number" step="0.1" min="0" max="1.5"></label>
+            <label>Character expressiveness <input name="character_expressiveness" type="number" step="0.1" min="0" max="1.5"></label>
+            <label>Free the GPU after (minutes idle, 0 = never) <input name="unload_after_minutes" type="number" min="0"></label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Whisper check</h2>
+          <div class="row">
+            <label>Mode <select name="whisper_mode"><option value="builtin">Built in</option><option value="external">My Whisper server</option><option value="off">Off</option></select></label>
+            <label>Model (built in) <input name="whisper_model"></label>
+            <label>Runs on (built in) <select name="whisper_device"><option>cpu</option><option>cuda</option></select></label>
+            <label>Whisper server address <input name="whisper_url" placeholder="http://192.168.1.10:9000"></label>
+          </div>
+          <div class="row">
+            <label>Minimum match (0 to 1) <input name="whisper_min_match" type="number" step="0.05" min="0" max="1"></label>
+            <label>Tries before giving up <input name="max_retries" type="number" min="0" max="5"></label>
+          </div>
+          <button type="button" data-test="whisper">Test</button> <span class="test-result" data-for="whisper"></span>
+          <p class="muted">Each clip is listened to and rendered again if the words don't match. Built in runs faster-whisper on your CPU so the GPU stays free for the voices.</p>
+        </div>
+        <div class="card">
+          <h2>Audiobook</h2>
+          <div class="row">
+            <label>Format <select name="output_format"><option value="m4b">M4B audiobook</option><option value="mp3">MP3</option></select></label>
+            <label>Bitrate (kbps) <input name="bitrate_kbps" type="number" min="32" max="320"></label>
+            <label>Loudness (LUFS) <input name="loudness_lufs" type="number" min="-30" max="-10"></label>
+          </div>
+          <label class="inline"><input type="checkbox" name="review_before_render"> Stop after casting so I can check it before rendering</label>
+          <h3>Pauses (seconds)</h3>
+          <div class="row">
+            <label>Sentence <input name="pause_sentence" type="number" step="0.05" min="0"></label>
+            <label>Same speaker <input name="pause_segment" type="number" step="0.05" min="0"></label>
+            <label>New speaker <input name="pause_speaker_change" type="number" step="0.05" min="0"></label>
+            <label>Paragraph <input name="pause_paragraph" type="number" step="0.05" min="0"></label>
+            <label>Chapter <input name="pause_chapter" type="number" step="0.1" min="0"></label>
+          </div>
+        </div>
+        <button type="submit" class="primary">Save settings</button> <span id="settings-status" class="muted"></span>
+      </form>
+    </section>
+  </main>
+  <div id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

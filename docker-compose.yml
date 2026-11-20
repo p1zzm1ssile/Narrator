@@ -1,0 +1,28 @@
+# Narrator on any Docker host with an NVIDIA GPU (needs the NVIDIA Container Toolkit).
+# On Unraid, use the template in unraid/narrator.xml instead.
+services:
+  narrator:
+    image: ghcr.io/p1zzm1ssile/narrator:latest
+    container_name: narrator
+    restart: unless-stopped
+    ports:
+      - "9895:9895"
+    volumes:
+      - /mnt/user/appdata/narrator:/config
+    environment:
+      # Your Ollama (who says what, and how). Leave empty to guess from the text.
+      - OLLAMA_URL=http://192.168.1.10:11434
+      - OLLAMA_MODEL=qwen2.5:7b
+      # Your Kokoro-FastAPI, for fast and fallback voices
+      - KOKORO_URL=http://192.168.1.10:8880
+      # builtin, external or off. builtin runs faster-whisper on the CPU.
+      - WHISPER_MODE=builtin
+      # Optional: ask for this password in the browser and API
+      # - WEB_PASSWORD=change-me
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
