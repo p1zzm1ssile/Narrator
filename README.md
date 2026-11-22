@@ -72,8 +72,9 @@ CAST: Mira (female, child, British), Tom (male, old, Cornish, gruff but kind)
 
 - `CAST:` is optional. Gender, age and accent words help pick a voice: *British*, *Scottish* or *Cornish* prefer Kokoro's British voices, for example.
 - Each line is `[SPEAKER | how they say it] the words`. Dialogue lines hold only the spoken words, with no quote marks or *"she said"*.
+- Everything after a tag, up to the next tag, is read by that speaker, so a tag can also sit on its own line, or at the end of the line before (Grok often writes it that way).
 - The feeling words are free-form. *whispering* or *hushed* always whisper; otherwise the first feeling named wins, and *very*, *shouting* or *slightly* make it stronger or softer.
-- Lines with no blank line between them flow on with short pauses. A blank line gives a paragraph pause. `[PAUSE 2s]` on its own line adds a pause.
+- A change of speaker gets a short pause, and the same speaker carrying on gets a paragraph pause. A blank line inside one speaker's text starts a new paragraph. `[PAUSE 2s]` adds a pause of your own.
 
 A prompt you can give Grok, ChatGPT or Claude to write stories this way is in [docs/story-prompt.md](docs/story-prompt.md). There's a short example in [examples/the-lighthouse-tagged.txt](examples/the-lighthouse-tagged.txt).
 
@@ -86,7 +87,7 @@ Everything the web UI does is in the API. With `WEB_PASSWORD` set, send it as HT
 | `POST /api/jobs` | Start a story. Form fields: `file` (.txt or .md) or `text`, and optional `title`, `author`, `format` (`m4b`/`mp3`), `review` (`0` renders straight away, `1` stops for you to check the cast) |
 | `GET /api/jobs`, `GET /api/jobs/{id}` | Progress: `status` is queued, tagging, review, rendering, mixing, done, failed or stopped |
 | `GET /api/jobs/{id}/script`, `PUT /api/jobs/{id}/script` | The cast and lines. PUT `{"characters": {"Tom": {"voice": "kokoro:bm_george"}}, "segments": [{"id": 4, "emotion": "angry", "intensity": 0.8}], "narrator_voice": "..."}` |
-| `POST /api/jobs/{id}/render`, `/retag`, `/stop`, `DELETE /api/jobs/{id}` | Render, cast again with the LLM, stop, delete |
+| `POST /api/jobs/{id}/render`, `/retag`, `/stop`, `DELETE /api/jobs/{id}` | Render, read and cast again, stop, delete |
 | `GET /api/jobs/{id}/audio` | Download the audiobook |
 | `GET /api/voices` | Chatterbox and Kokoro voices, and the feelings |
 | `GET /api/voices/sample?voice=kokoro:af_bella` | A sample of a voice (WAV) |

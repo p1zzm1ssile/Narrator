@@ -34,12 +34,33 @@ def test_parse_tagged():
     assert not any("[" in s["text"] or "|" in s["text"] for s in d["segments"])
 
 
-def test_lines_without_tags_are_narration():
-    text = "[NARRATOR | calm] One.\n[BOB | angry] Two!\nJust a plain line.\n[PAUSE]"
+def test_text_after_a_tag_belongs_to_it_until_the_next_tag():
+    text = "[NARRATOR | calm] One.\n[BOB | angry] Two!\nStill Bob.\n\nBob again, new paragraph.\n[PAUSE]\nAfter the pause."
     d = story.parse_tagged(text, "T")
-    assert [(s["kind"], s["speaker"]) for s in d["segments"]] == [
-        ("narration", "Narrator"), ("dialogue", "Bob"), ("narration", "Narrator"), ("pause", "Narrator")]
+    assert [(s["kind"], s["speaker"], s["text"]) for s in d["segments"]] == [
+        ("narration", "Narrator", "One."), ("dialogue", "Bob", "Two! Still Bob."),
+        ("dialogue", "Bob", "Bob again, new paragraph."), ("pause", "Narrator", ""),
+        ("narration", "Narrator", "After the pause.")]
     assert d["segments"][3]["seconds"] == 1.0
+
+
+def test_grok_layout_tag_at_end_of_previous_line():
+    """Grok puts each tag at the end of the line before, or on its own line, then a blank line."""
+    text = (
+        "[LAUREN | nervous, quiet]\n\n"
+        "I still feel strange doing this. With you watching.[NARRATOR | gentle]\n\n"
+        "Marcus stepped closer. He did not rush her.[MARCUS | calm]\n\n"
+        "You can still leave. Door is right there.\n"
+    )
+    assert story.is_tagged(text)
+    d = story.parse_any(text, "T")
+    assert [(s["speaker"], s["text"]) for s in d["segments"]] == [
+        ("Lauren", "I still feel strange doing this. With you watching."),
+        ("Narrator", "Marcus stepped closer. He did not rush her."),
+        ("Marcus", "You can still leave. Door is right there."),
+    ]
+    assert d["segments"][0]["emotion"] == "fearful"
+    assert set(d["characters"]) == {"Lauren", "Marcus"}
 
 
 def test_feeling_words():

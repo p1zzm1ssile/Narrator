@@ -124,7 +124,7 @@ function renderActions(job) {
   else {
     buttons.push(`<button data-act="render" class="primary">${job.status === "done" ? "Render again" : "Render"}</button>`);
     buttons.push(`<button data-act="save">Save changes</button>`);
-    buttons.push(`<button data-act="retag">Cast again with the LLM</button>`);
+    buttons.push(`<button data-act="retag">Read and cast again</button>`);
   }
   if (job.status === "done") buttons.push(`<a href="/api/jobs/${job.id}/audio" download><button>Download ${job.format.toUpperCase()}</button></a>`);
   if (!working) buttons.push(`<button data-act="delete" class="danger">Delete</button>`);
@@ -149,7 +149,7 @@ async function jobAction(act) {
     if (act === "save") { await saveChanges(); toast("Saved"); renderScript(); return; }
     if (act === "render") { await saveChanges(); await api(`/api/jobs/${id}/render`, { method: "POST" }); }
     if (act === "retag") {
-      if (!confirm("Cast again? Your changes to speakers and feelings will be replaced.")) return;
+      if (!confirm("Read the story and cast it again? Your changes to voices, speakers and feelings will be replaced.")) return;
       await api(`/api/jobs/${id}/retag`, { method: "POST" });
     }
     if (act === "stop") await api(`/api/jobs/${id}/stop`, { method: "POST" });

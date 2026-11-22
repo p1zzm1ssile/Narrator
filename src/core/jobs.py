@@ -22,9 +22,11 @@ from utils.logger import log
 
 WORKING = ("queued", "tagging", "rendering", "mixing")
 _lock = threading.RLock()
-_queue = queue.Queue()
+_tag_queue = queue.Queue()
+_render_queue = queue.Queue()
 _cancel = set()
-_current = {"job": None}
+_current = {"job": None, "tagging": None}
+_waiting = []  # render jobs in the order they were queued
 
 
 def _dir(job_id):
@@ -102,7 +104,7 @@ def create(title, text, author="", output_format=None, auto_render=None):
         "characters": 0, "seconds": 0,
     }
     save(job)
-    _queue.put(job_id)
+    _tag_queue.put(job_id)
     log.info(f"New story {job['title']!r}: {len(parsed['chapters'])} chapter(s), {len(parsed['segments'])} segments")
     return job
 
@@ -112,15 +114,20 @@ def start_render(job_id):
     if job["status"] in WORKING:
         raise ValueError("This story is already being worked on")
     set_state(job_id, status="queued", next="render", message="Waiting to render", error=None)
-    _queue.put(job_id)
+    _queue_render(job_id)
 
 
 def retag(job_id):
     job = get(job_id)
     if job["status"] in WORKING:
         raise ValueError("This story is already being worked on")
-    set_state(job_id, status="queued", next="tag", message="Waiting to start", error=None)
-    _queue.put(job_id)
+    # Read the story again, so a newer version of Narrator's reader is used
+    parsed = story.parse_any((_dir(job_id) / "story.txt").read_text(), job["title"])
+    parsed.setdefault("characters", {})
+    save_script(job_id, parsed)
+    set_state(job_id, status="queued", next="tag", message="Waiting to start", error=None,
+              chapters=len(parsed["chapters"]), total=len(parsed["segments"]))
+    _tag_queue.put(job_id)
 
 
 def cancel(job_id):
@@ -128,13 +135,17 @@ def cancel(job_id):
     if job["status"] in WORKING:
         _cancel.add(job_id)
         if job["status"] == "queued":
+            with _lock:
+                if job_id in _waiting:
+                    _waiting.remove(job_id)
             set_state(job_id, status="stopped", message="Stopped before it started")
+            _update_waiting_messages()
 
 
 def delete(job_id):
     cancel(job_id)
     for _ in range(50):
-        if _current["job"] != job_id:
+        if job_id not in (_current["job"], _current["tagging"]):
             break
         time.sleep(0.2)
     shutil.rmtree(_dir(job_id), ignore_errors=True)
@@ -176,46 +187,123 @@ def update_script(job_id, changes):
 
 def recover():
     """Put stories that were cut off by a restart back in the queue."""
-    for job in all_jobs():
-        if job["status"] in WORKING:
-            if job["status"] == "rendering" or job["status"] == "mixing":
-                job["next"] = "render"
-            set_state(job["id"], status="queued", next=job.get("next", "tag"), message="Picking up after a restart")
-            _queue.put(job["id"])
-
-
-def worker():
-    while True:
-        try:
-            job_id = _queue.get(timeout=30)
-        except queue.Empty:
-            engines.chatterbox.idle_unload()
+    for job in sorted(all_jobs(), key=lambda j: j.get("created", 0)):
+        if job["status"] not in WORKING:
             continue
+        if job["status"] in ("rendering", "mixing"):
+            job["next"] = "render"
+        nxt = job.get("next", "tag")
+        set_state(job["id"], status="queued", next=nxt, message="Picking up after a restart")
+        log.info(f"Picking up {job['title']!r} ({job['id']}) after a restart: "
+                 f"{'rendering' if nxt == 'render' else 'casting'} from where it stopped")
+        if nxt == "render":
+            _queue_render(job["id"])
+        else:
+            _tag_queue.put(job["id"])
+
+
+def _queue_render(job_id):
+    with _lock:
+        if job_id not in _waiting:
+            _waiting.append(job_id)
+    _render_queue.put(job_id)
+    _update_waiting_messages()
+
+
+def _update_waiting_messages():
+    """Tell each waiting story what it's waiting for."""
+    with _lock:
+        waiting = list(_waiting)
+    running = _current["job"]
+    title = None
+    if running:
+        try:
+            title = get(running)["title"]
+        except KeyError:
+            title = None
+    for n, job_id in enumerate(waiting):
         try:
             job = get(job_id)
         except KeyError:
             continue
-        if job_id in _cancel or job["status"] != "queued":
+        if job["status"] != "queued":
+            continue
+        if title:
+            ahead = f" and {n} other stor{'y' if n == 1 else 'ies'}" if n else ""
+            msg = f"Waiting for {title!r}{ahead} to finish rendering"
+        else:
+            msg = "Waiting to render"
+        if job.get("message") != msg:
+            set_state(job_id, message=msg)
+
+
+def _tag_worker():
+    while True:
+        job_id = _tag_queue.get()
+        try:
+            job = get(job_id)
+        except KeyError:
+            continue
+        if job_id in _cancel or job["status"] != "queued" or job.get("next") != "tag":
+            _cancel.discard(job_id)
+            continue
+        _current["tagging"] = job_id
+        try:
+            _tag(job_id)
+            job = get(job_id)
+            if job["review"]:
+                set_state(job_id, status="review", next="render",
+                          message="Check the cast and lines, then press Render")
+                log.info(f"{job['title']!r} is cast and waiting for you: check it and press Render")
+            else:
+                set_state(job_id, status="queued", next="render", message="Waiting to render")
+                _queue_render(job_id)
+        except _Cancelled:
+            set_state(job_id, status="stopped", message="Stopped")
+            log.info(f"Stopped casting {job_id}")
+        except Exception as e:  # noqa: BLE001 - the job shows the error, the worker carries on
+            log.exception(f"Casting story {job_id} failed")
+            set_state(job_id, status="failed", error=str(e), message=f"Failed: {e}")
+        finally:
+            _cancel.discard(job_id)
+            _current["tagging"] = None
+
+
+def _render_worker():
+    while True:
+        try:
+            job_id = _render_queue.get(timeout=30)
+        except queue.Empty:
+            try:
+                engines.chatterbox.idle_unload()
+            except Exception as e:  # noqa: BLE001 - never let this stop the worker
+                log.warning(f"Couldn't free the GPU ({e})")
+            continue
+        with _lock:
+            if job_id in _waiting:
+                _waiting.remove(job_id)
+        try:
+            job = get(job_id)
+        except KeyError:
+            continue
+        if job_id in _cancel or job["status"] != "queued" or job.get("next") != "render":
             _cancel.discard(job_id)
             continue
         _current["job"] = job_id
+        _update_waiting_messages()
+        started = time.time()
         try:
-            if job.get("next") == "tag":
-                _tag(job_id)
-                job = get(job_id)
-                if job["review"]:
-                    set_state(job_id, status="review", next="render",
-                              message="Check the cast and lines, then press Render")
-                    continue
             _render(job_id)
         except _Cancelled:
             set_state(job_id, status="stopped", message="Stopped")
+            log.info(f"Stopped rendering {job['title']!r} after {_minutes(time.time() - started)}")
         except Exception as e:  # noqa: BLE001 - the job shows the error, the worker carries on
-            log.exception(f"Story {job_id} failed")
+            log.exception(f"Rendering {job['title']!r} ({job_id}) failed")
             set_state(job_id, status="failed", error=str(e), message=f"Failed: {e}")
         finally:
             _cancel.discard(job_id)
             _current["job"] = None
+            _update_waiting_messages()
 
 
 class _Cancelled(Exception):
@@ -230,6 +318,8 @@ def _check_cancel(job_id):
 def _tag(job_id):
     s = config.get()
     data = script(job_id)
+    log.info(f"Casting {get(job_id)['title']!r}: {len(data['segments'])} segments"
+             f"{', tagged in the story' if data.get('pretagged') else ''}")
     if data.get("pretagged"):
         # The story already says who speaks each line and how, so the LLM isn't needed
         set_state(job_id, status="tagging", message="Casting the characters from the story's tags", done=0)
@@ -265,7 +355,8 @@ def _tag(job_id):
     voices.auto_cast(data["characters"], data["narrator_voice"], kokoro_voices)
     save_script(job_id, data)
     set_state(job_id, characters=len(data["characters"]), done=0, total=len(data["segments"]))
-    log.info(f"Story {job_id}: {len(data['characters'])} speaking character(s) found")
+    cast = ", ".join(f"{n} -> {c['voice']}" for n, c in data["characters"].items())
+    log.info(f"Cast {get(job_id)['title']!r}: narrator -> {data['narrator_voice']}" + (f", {cast}" if cast else ""))
 
 
 def voice_for(seg, data):
@@ -331,30 +422,55 @@ def _render(job_id):
     clips_dir = _dir(job_id) / "clips"
     clips_dir.mkdir(exist_ok=True)
     clip_paths, used, low = {}, set(), 0
-    total = len(data["segments"])
-    started = time.time()
-    for n, seg in enumerate(data["segments"]):
-        _check_cancel(job_id)
+
+    # Work out every clip first, so progress counts clips, not segments
+    plan = []
+    for seg in data["segments"]:
+        clip_paths[seg["id"]] = []
+        if seg["kind"] == "pause":
+            continue
         voice = voice_for(seg, data)
         expressive = s["character_expressiveness"] if seg["kind"] == "dialogue" else s["narrator_expressiveness"]
         p = engines.params(seg["emotion"], seg["intensity"], expressive)
-        files = []
         for piece in story.chunks(seg["text"]):
-            key = _clip_key(piece, voice, p)
-            path = clips_dir / f"{key}.wav"
-            if not path.exists():
-                audio, score = render_line(piece, voice, p)
-                if score < s["whisper_min_match"]:
-                    low += 1
-                sf.write(path, audio, engines.SAMPLE_RATE, subtype="PCM_16")
-            files.append(path)
+            path = clips_dir / f"{_clip_key(piece, voice, p)}.wav"
+            plan.append((seg, piece, voice, p, path))
+            clip_paths[seg["id"]].append(path)
             used.add(path.name)
-        clip_paths[seg["id"]] = files
-        if n % 3 == 0 or n == total - 1:
-            elapsed = time.time() - started
-            left = elapsed / (n + 1) * (total - n - 1)
-            set_state(job_id, done=n + 1, total=total,
-                      message=f"Rendering voices ({n + 1} of {total}, about {_minutes(left)} left)")
+    todo = [c for c in plan if not c[4].exists()]
+    total = len(plan)
+    voices_used = sorted({c[2] for c in todo})
+    log.info(f"Rendering {job['title']!r}: {total} lines, {len(todo)} to render"
+             f"{f' ({total - len(todo)} kept from before)' if len(todo) < total else ''}, "
+             f"voices: {', '.join(voices_used) or 'none needed'}")
+    set_state(job_id, done=total - len(todo), total=total,
+              message=f"Rendering voices ({total - len(todo)} of {total})")
+
+    started = last_log = time.time()
+    for n, (seg, piece, voice, p, path) in enumerate(todo, start=1):
+        _check_cancel(job_id)
+        t0 = time.time()
+        try:
+            audio, score = render_line(piece, voice, p)
+        except Exception as e:
+            raise RuntimeError(f"line {seg['id']} ({seg['speaker']}, {voice}): {e}") from e
+        took = time.time() - t0
+        if took > 90:
+            log.warning(f"One line took {took:.0f}s to render ({voice}): {piece[:60]!r}")
+        log.debug(f"Rendered line {seg['id']} as {seg['speaker']} ({voice}, {seg['emotion']}) "
+                  f"in {took:.1f}s, match {score:.0%}")
+        if score < s["whisper_min_match"]:
+            low += 1
+        sf.write(path, audio, engines.SAMPLE_RATE, subtype="PCM_16")
+        done = total - len(todo) + n
+        elapsed = time.time() - started
+        left = elapsed / n * (len(todo) - n)
+        msg = f"Rendering voices ({done} of {total}, {done * 100 // total}%, about {_minutes(left)} left)"
+        set_state(job_id, done=done, total=total, message=msg)
+        if time.time() - last_log >= 30 or n == len(todo):
+            log.info(f"{job['title']!r}: {msg[len('Rendering voices ('):-1]}")
+            last_log = time.time()
+
     # Clips from earlier renders that are no longer needed
     for f in clips_dir.glob("*.wav"):
         if f.name not in used:
@@ -362,6 +478,7 @@ def _render(job_id):
 
     _check_cancel(job_id)
     set_state(job_id, status="mixing", message="Joining the clips and making the audiobook")
+    log.info(f"{job['title']!r}: joining {total} lines into an {job['format'].upper()}")
     work = _dir(job_id) / "work"
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir()
@@ -380,7 +497,8 @@ def _render(job_id):
     note = f", {low} line(s) still didn't match well, listen for those" if low else ""
     set_state(job_id, status="done", output=out.name, seconds=round(seconds),
               message=f"Done: {_minutes(seconds)} of audio{note}")
-    log.info(f"Story {job_id} finished: {out.name} ({_minutes(seconds)})")
+    log.info(f"Finished {job['title']!r}: {out.name}, {_minutes(seconds)} of audio, "
+             f"rendered in {_minutes(time.time() - started)}{note}")
 
 
 def output_path(job_id):
@@ -403,5 +521,13 @@ def _minutes(seconds):
     return f"{h}h {m}m" if h else f"{m} min"
 
 
+_started = []
+
+
 def start_worker():
-    threading.Thread(target=worker, name="narrator-worker", daemon=True).start()
+    """Start the casting and rendering threads, once."""
+    if _started:
+        return
+    _started.append(True)
+    threading.Thread(target=_tag_worker, name="narrator-cast", daemon=True).start()
+    threading.Thread(target=_render_worker, name="narrator-render", daemon=True).start()

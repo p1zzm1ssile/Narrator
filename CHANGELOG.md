@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1
+
+- **Grok's tag layout is read properly.** A `[SPEAKER | feeling]` tag can now sit anywhere: at the start of its line, on a line of its own, or at the end of the line before, as Grok writes it. Everything after a tag, up to the next one, belongs to that speaker. Before, stories written that way were read as plain text and every line went to the narrator. Press **Read and cast again** on a story you've already added to read it with the fix.
+- **A new story is cast straight away**, even while another is rendering. Before, it waited silently behind the render, so nothing seemed to happen after uploading. A story waiting to render now says which one it's waiting for.
+- **Render progress in the log**: what's being rendered and with which voices, then progress with a percentage and time left every 30 seconds, the cast, when it's joining the audio, and when it's done. A line that takes over 90 seconds is logged, and a failed line says which line and voice. Stories picked up after a restart are logged too.
+- **No more "Sampling: 19%" in the log.** That was Chatterbox's own bar for each line, which stops early when the line ends, so it always looked stuck. It's hidden now.
+- **Freeing the GPU never waits on a line being rendered**, and can't unload Chatterbox straight after it loads.
+- Log lines are no longer printed twice.
+- The story prompt in docs/story-prompt.md is stricter about where tags go.
+
 ## 0.1.0
 
 First version.

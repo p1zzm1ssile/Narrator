@@ -174,28 +174,26 @@ def chunks(text, limit=280):
 #   [MIRA | scared, whispering] It's gone out.
 #   [PAUSE 2s]
 #
-# Lines with no blank line between them are read as one passage, with short
-# pauses; a blank line gives a paragraph pause.
+# A tag can sit anywhere: at the start of the line it belongs to, on a line of
+# its own, or at the end of the line before (as Grok often writes it). All the
+# text after a tag, up to the next tag, is read by that speaker. A blank line
+# inside one speaker's text starts a new paragraph.
 
-TAGGED_LINE = re.compile(r"^\s*\[\s*([^\]|]+?)\s*(?:\|\s*([^\]]*?)\s*)?\]\s*(.*)$")
-PAUSE_LINE = re.compile(r"^\s*\[\s*PAUSE\s*(?:([\d.]+)\s*(?:s|sec|secs|seconds)?)?\s*\]\s*$", re.IGNORECASE)
-CAST_LINE = re.compile(r"^\s*CAST\s*:\s*(.+)$", re.IGNORECASE)
+TAG = re.compile(
+    r"\[\s*(?:(PAUSE)\b\s*(?:([\d.]+)\s*(?:s|sec|secs|seconds)?)?"
+    r"|([^\[\]|\n]{1,60}?)\s*\|\s*([^\[\]\n]{0,120}?))\s*\]",
+    re.IGNORECASE,
+)
+CAST_LINE = re.compile(r"^\s*CAST\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 CAST_ENTRY = re.compile(r"\s*([^,(]+?)\s*(?:\(([^)]*)\))?\s*(?:,|$)")
+HEADING_LINE = re.compile(r"^[ \t]*(#{1,3}[ \t]+\S[^\n]*)$", re.MULTILINE)
 NARRATOR_NAMES = {"narrator", "narration", "narrate"}
 
 
 def is_tagged(text):
-    hits = 0
-    for line in text.splitlines()[:200]:
-        if PAUSE_LINE.match(line) or CAST_LINE.match(line):
-            hits += 1
-        else:
-            m = TAGGED_LINE.match(line)
-            if m and m.group(2) is not None and m.group(3).strip():
-                hits += 1
-        if hits >= 3:
-            return True
-    return False
+    """True when the story uses [SPEAKER | feeling] tags (at least 3, or a CAST line and 1)."""
+    tags = sum(1 for m in TAG.finditer(text[:200_000]) if m.group(3) or m.group(1))
+    return tags >= 3 or (tags >= 1 and bool(CAST_LINE.search(text)))
 
 
 def _cast(text):
@@ -218,12 +216,17 @@ def _cast(text):
 
 
 def parse_tagged(text, title="Story"):
-    """Read a story written in the tagged format. Speakers and feelings come from the tags."""
+    """Read a story written with [SPEAKER | feeling] tags. Speakers and feelings come from the tags."""
     from core.tagger import feeling  # here to keep story.py free of tagger at import time
 
     text = _clean(text)
-    chapters, segments, cast = [], [], {}
-    paragraph, blank = 0, False
+    cast = {}
+    for m in CAST_LINE.finditer(text):
+        cast.update(_cast(m.group(1)))
+    text = CAST_LINE.sub("", text)
+
+    chapters, segments = [], []
+    state = {"paragraph": 0, "last_speaker": None}
 
     def chapter_index():
         if not chapters:
@@ -231,6 +234,7 @@ def parse_tagged(text, title="Story"):
         return len(chapters) - 1
 
     def speaker_name(raw):
+        raw = raw.strip()
         if raw.lower() in NARRATOR_NAMES:
             return "Narrator"
         for known in cast:
@@ -238,48 +242,57 @@ def parse_tagged(text, title="Story"):
                 return known
         return raw.title() if raw.isupper() else raw
 
-    for line in text.split("\n"):
-        if not line.strip():
-            blank = True
-            continue
-        m = CAST_LINE.match(line)
-        if m:
-            cast.update(_cast(m.group(1)))
-            continue
-        if blank:
-            paragraph += 1
-            blank = False
-        m = PAUSE_LINE.match(line)
-        if m:
-            seconds = float(m.group(1)) if m.group(1) else 1.0
-            seg = _segment(len(segments), chapter_index(), paragraph, "pause", "")
+    def add_text(body, who, words):
+        """Add one speaker's text, which may hold blank lines and chapter headings."""
+        pos = 0
+        pieces = []
+        for h in HEADING_LINE.finditer(body):
+            pieces.append(("text", body[pos:h.start()]))
+            pieces.append(("heading", h.group(1).lstrip("#").strip()))
+            pos = h.end()
+        pieces.append(("text", body[pos:]))
+        for kind, piece in pieces:
+            if kind == "heading":
+                if chapters and not any(s["chapter"] == len(chapters) - 1 for s in segments):
+                    chapters[-1] = {"title": piece}
+                else:
+                    chapters.append({"title": piece})
+                segments.append(_segment(len(segments), len(chapters) - 1, -1, "heading", piece))
+                state["paragraph"] += 1
+                state["last_speaker"] = None
+                continue
+            paras = [re.sub(r"\s+", " ", p).strip() for p in re.split(r"\n\s*\n", piece)]
+            paras = [p for p in paras if WORDY.search(p)]
+            for i, para in enumerate(paras):
+                # A new paragraph when the same voice carries on (a new beat of
+                # narration), or after a blank line; a change of speaker flows on.
+                if i > 0 or state["last_speaker"] == who:
+                    state["paragraph"] += 1
+                kind_ = "narration" if who == "Narrator" else "dialogue"
+                if kind_ == "dialogue":
+                    para = re.sub(r'^[“"](.*)[”"]$', r"\1", para).strip()
+                seg = _segment(len(segments), chapter_index(), state["paragraph"], kind_, para)
+                seg["speaker"] = who
+                seg["emotion"], seg["intensity"] = feeling(words)
+                seg["direction"] = words
+                segments.append(seg)
+                state["last_speaker"] = who
+                if kind_ == "dialogue":
+                    cast.setdefault(who, {"gender": "unknown", "age": "", "description": ""})
+
+    who, words, pos = "Narrator", "", 0
+    for m in TAG.finditer(text):
+        add_text(text[pos:m.start()], who, words)
+        pos = m.end()
+        if m.group(1):  # [PAUSE 2s]
+            seconds = float(m.group(2)) if m.group(2) else 1.0
+            seg = _segment(len(segments), chapter_index(), state["paragraph"], "pause", "")
             seg["seconds"] = max(0.0, min(seconds, 30.0))
             segments.append(seg)
+            who, words = "Narrator", ""
             continue
-        if HEADING.match(line) and len(line) < 120 and not TAGGED_LINE.match(line):
-            heading = line.strip().lstrip("#").strip()
-            if chapters and not any(s["chapter"] == len(chapters) - 1 for s in segments):
-                chapters[-1] = {"title": heading}
-            else:
-                chapters.append({"title": heading})
-            segments.append(_segment(len(segments), len(chapters) - 1, -1, "heading", heading))
-            paragraph += 1
-            continue
-        m = TAGGED_LINE.match(line)
-        if m and m.group(3).strip():
-            who, words, spoken = speaker_name(m.group(1).strip()), m.group(2) or "", m.group(3).strip()
-        else:
-            who, words, spoken = "Narrator", "", line.strip()
-        if not WORDY.search(spoken):
-            continue
-        kind = "narration" if who == "Narrator" else "dialogue"
-        seg = _segment(len(segments), chapter_index(), paragraph, kind, spoken)
-        seg["speaker"] = who
-        seg["emotion"], seg["intensity"] = feeling(words)
-        seg["direction"] = words
-        segments.append(seg)
-        if kind == "dialogue":
-            cast.setdefault(who, {"gender": "unknown", "age": "", "description": ""})
+        who, words = speaker_name(m.group(3)), (m.group(4) or "").strip()
+    add_text(text[pos:], who, words)
     if not chapters:
         chapters.append({"title": title})
     return {"chapters": chapters, "segments": segments, "characters": cast, "pretagged": True}

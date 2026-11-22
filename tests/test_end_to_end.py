@@ -113,3 +113,49 @@ def test_tagged_story_skips_llm_and_renders(app):
     assert script["pretagged"] and set(script["characters"]) == {"Mira", "Tom"}
     spoken = [c[0] for c in calls]
     assert "In this?" in spoken and not any("[" in t for t in spoken)
+
+
+def test_new_story_is_cast_while_another_renders(app, monkeypatch):
+    """Casting never waits behind a long render, and a second render says what it's waiting for."""
+    from core import engines
+    client, calls = app
+    gate = __import__("threading").Event()
+    real = engines.speak
+
+    def slow_speak(*a, **k):
+        gate.wait(10)
+        return real(*a, **k)
+
+    monkeypatch.setattr(engines, "speak", slow_speak)
+    with open(EXAMPLE, "rb") as f:
+        first = client.post("/api/jobs", data={"title": "First", "review": "0"},
+                            files={"file": ("a.txt", f, "text/plain")}).json()["id"]
+    wait(client, first, ("rendering",))
+    with open(EXAMPLE, "rb") as f:
+        second = client.post("/api/jobs", data={"title": "Second", "review": "1"},
+                             files={"file": ("b.txt", f, "text/plain")}).json()["id"]
+    assert wait(client, second, ("review",))["status"] == "review"
+    client.post(f"/api/jobs/{second}/render")
+    job = wait(client, second, ("queued",))
+    assert "Waiting for 'First'" in job["message"]
+    gate.set()
+    assert wait(client, first, ("done", "failed"))["status"] == "done"
+    assert wait(client, second, ("done", "failed"))["status"] == "done"
+
+
+def test_read_again_uses_the_new_reader(app):
+    client, _ = app
+    from core import jobs
+    text = "[LAUREN | nervous]\n\nI feel strange.[NARRATOR | gentle]\n\nMarcus stepped closer.[MARCUS | calm]\n\nYou can leave."
+    job = client.post("/api/jobs", data={"text": text, "review": "1"}).json()
+    wait(client, job["id"], ("review",))
+    # Pretend it was read by an older version as plain narration
+    data = jobs.script(job["id"])
+    data.pop("pretagged")
+    for seg in data["segments"]:
+        seg["speaker"], seg["kind"] = "Narrator", "narration"
+    jobs.save_script(job["id"], data)
+    client.post(f"/api/jobs/{job['id']}/retag")
+    wait(client, job["id"], ("review",))
+    speakers = [s["speaker"] for s in client.get(f"/api/jobs/{job['id']}/script").json()["segments"]]
+    assert speakers == ["Lauren", "Narrator", "Marcus"]

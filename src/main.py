@@ -3,9 +3,14 @@
 Web UI and API on port 9895 (WEB_PORT). See README.md for the API.
 """
 
+import os
+
+# Chatterbox prints a "Sampling: 19%" bar for every line, which stops early when
+# the line ends and looks stuck. Narrator logs its own progress instead.
+os.environ.setdefault("TQDM_DISABLE", "1")
+
 import base64
 import io
-import os
 import re
 import secrets
 import shutil
@@ -22,7 +27,7 @@ from pydantic import BaseModel
 from core import checker, config, engines, jobs, story, tagger, voices
 from utils.logger import log, setup
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 WEB_DIR = Path(__file__).parent / "web"
 PASSWORD = os.environ.get("WEB_PASSWORD", "")
@@ -80,7 +85,7 @@ def status():
         "version": __version__, "gpu": gpu,
         "chatterbox_loaded": engines.chatterbox.model is not None,
         "ollama": bool(s["ollama_url"]), "kokoro": bool(s["kokoro_url"]),
-        "whisper": s["whisper_mode"], "working_on": jobs._current["job"],
+        "whisper": s["whisper_mode"], "rendering": jobs._current["job"], "casting": jobs._current["tagging"],
     }
 
 
