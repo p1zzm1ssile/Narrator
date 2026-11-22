@@ -75,5 +75,26 @@ def test_cast_hints_pick_accent():
     chars = {"Tom": {"gender": "male", "description": "Cornish", "lines": 3},
              "Mira": {"gender": "female", "description": "American", "lines": 4}}
     voices.auto_cast(chars, "chatterbox:default", ["af_bella", "am_adam", "bf_emma", "bm_george"])
-    assert chars["Tom"]["voice"] == "kokoro:bm_george"
-    assert chars["Mira"]["voice"] == "kokoro:af_bella"
+    # Characters get expressive Chatterbox copies of Kokoro voices, never flat Kokoro
+    assert chars["Tom"]["voice"] == "chatterbox:k-bm_george"
+    assert chars["Mira"]["voice"] == "chatterbox:k-af_bella"
+
+
+def test_kokoro_copy_is_made_once_from_kokoro(tmp_path, monkeypatch):
+    import numpy as np
+    from core import config, engines
+    monkeypatch.setattr(config, "VOICES_DIR", tmp_path)
+    calls = []
+
+    def fake_kokoro(text, voice, p):
+        calls.append(voice)
+        return np.zeros(24000, dtype=np.float32)
+
+    monkeypatch.setattr(engines.kokoro, "speak", fake_kokoro)
+    assert voices.path("k-bm_george") == tmp_path / "k-bm_george.wav"
+    assert voices.path("k-bm_george") == tmp_path / "k-bm_george.wav"
+    assert calls == ["bm_george"]
+    assert voices.path("k-../etc") is None
+    lib = {v["id"]: v for v in voices.library([])}
+    assert lib["chatterbox:k-bm_george"]["gender"] == "male"
+    assert lib["chatterbox:k-bm_george"]["accent"] == "British"

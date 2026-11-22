@@ -138,12 +138,13 @@ def test_service(service: str):
 
 @app.get("/api/voices")
 def list_voices():
-    kokoro = []
+    names = []
     try:
-        kokoro = [voices.kokoro_info(v) for v in engines.kokoro.voices()]
+        names = engines.kokoro.voices()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Kokoro voices unavailable: {e}")
-    return {"chatterbox": voices.library(), "kokoro": kokoro, "emotions": tagger.EMOTIONS}
+    kokoro = [voices.kokoro_info(v) for v in names]
+    return {"chatterbox": voices.library(names), "kokoro": kokoro, "emotions": tagger.EMOTIONS}
 
 
 @app.get("/api/voices/sample")
@@ -157,7 +158,8 @@ def voice_sample(voice: str):
         if engine == "kokoro":
             name = voices.kokoro_info(key)["name"].split("+")[0]
         else:
-            name = next((v["name"] for v in voices.library() if v["id"] == voice), key)
+            name = voices.copy_info(key[2:])["name"] if voices.is_copy(key) else \
+                next((v["name"] for v in voices.library() if v["id"] == voice), key)
             if name == "Chatterbox default":
                 name = "the Chatterbox voice"
         text = voices.SAMPLE_TEXT.format(name=name)

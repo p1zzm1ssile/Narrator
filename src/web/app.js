@@ -306,7 +306,7 @@ function renderGallery() {
   $("#kokoro-missing").hidden = voiceData.kokoro.length > 0;
   $("#voice-grid").innerHTML = list.map((v) => {
     const key = v.id.split(":")[1];
-    const own = v.kind === "chatterbox" && key !== "default";
+    const own = v.kind === "chatterbox" && key !== "default" && !v.kokoro;
     const meta = [voiceMeta(v), v.kind === "chatterbox" ? v.description : ""].filter(Boolean).join(" · ");
     return `<div class="voice${v.id === narratorVoice ? " narrator" : ""}">
       <div class="name"><span>${esc(v.name)}</span><span class="kind ${v.kind === "chatterbox" ? "expressive" : ""}">${v.kind === "chatterbox" ? "Expressive" : "Fast"}</span></div>

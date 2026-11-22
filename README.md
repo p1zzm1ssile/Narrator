@@ -13,6 +13,8 @@ It runs as one Docker container on a machine with an NVIDIA GPU, such as an Unra
 
 ## Picking voices
 
+Characters are always cast with expressive Chatterbox voices: your own, then a Chatterbox copy of each of your English Kokoro voices. For a copy, Kokoro reads a short passage once, and Chatterbox copies that voice and acts with it. So every character can sound different and still show feeling. Plain Kokoro voices are flat, so they're only used if you pick one by hand.
+
 The **Voices** page lists every Chatterbox voice and every voice your Kokoro has, with its accent and gender. Press **Play** to hear each one read the same few lines, and **Use as narrator** on the one you like. Add your own voices there by uploading a short clip.
 
 When a story has been cast, its page lists the characters with a voice dropdown for each, and a play button to hear their first line in that voice. Every line is listed below with who says it and how they feel, so you can fix anything before pressing **Render**. Nothing needs setting up in Kokoro: give Narrator its address in Settings and it reads the voice list itself.

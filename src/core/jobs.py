@@ -410,6 +410,9 @@ def render_line(text, voice, p, check=True):
 
 
 def _kokoro_stand_in(voice):
+    key = voice.partition(":")[2]
+    if voices.is_copy(key):
+        return key[len(voices.COPY_PREFIX):]
     meta = {v["id"]: v for v in voices.library()}
     gender = meta.get(voice, {}).get("gender", "female")
     return "am_michael" if gender == "male" else "af_heart"

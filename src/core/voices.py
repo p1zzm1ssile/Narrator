@@ -2,6 +2,11 @@
 
 Each Chatterbox voice is <name>.wav (10 to 20 seconds of one person talking
 clearly) with its details in voices.json.
+
+Every English Kokoro voice also has an expressive copy, "chatterbox:k-<voice>":
+Kokoro reads a short passage once, and Chatterbox copies that voice and acts
+with it. So characters can each sound different and still show feeling,
+without you having to find voice clips.
 """
 
 import json
@@ -59,19 +64,63 @@ def slug(name):
     return s[:40] or "voice"
 
 
+COPY_PREFIX = "k-"
+# Varied, natural sentences give Chatterbox the most to copy from
+REFERENCE_TEXT = ("I wasn't sure I'd make it back before dark, but here I am. Honestly, the road was longer "
+                  "than I remembered, and colder too. Still, there's something about this old house. "
+                  "Do you hear that? It's only the wind. Come on, let's get inside and I'll tell you everything.")
+
+
+def is_copy(name):
+    return name.startswith(COPY_PREFIX) and re.fullmatch(r"[a-z]{2}_[a-z0-9_]+", name[len(COPY_PREFIX):]) is not None
+
+
 def path(name):
     if not name or name == "default" or "/" in name or ".." in name:
         return None
     p = config.VOICES_DIR / f"{name}.wav"
+    if not p.exists() and is_copy(name):
+        _make_copy(name[len(COPY_PREFIX):], p)
     return p if p.exists() else None
 
 
-def library():
-    """Chatterbox voices: [{"id", "name", "gender", "description"}]."""
+def _make_copy(kokoro_voice, out):
+    """Have Kokoro read the reference passage, to give Chatterbox a voice to copy."""
+    import soundfile as sf
+    from core import engines
+    from utils.logger import log
+
+    audio = engines.kokoro.speak(REFERENCE_TEXT, kokoro_voice, {"speed": 1.0})
+    config.VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".part.wav")
+    sf.write(tmp, audio, engines.SAMPLE_RATE, subtype="PCM_16")
+    tmp.replace(out)
+    log.info(f"Made an expressive copy of Kokoro's {kokoro_voice} for Chatterbox")
+
+
+def copy_info(kokoro_voice):
+    info = kokoro_info(kokoro_voice)
+    return {**info, "id": f"chatterbox:{COPY_PREFIX}{kokoro_voice}", "kokoro": kokoro_voice,
+            "description": f"Kokoro's {info['name']} voice, acted by Chatterbox"}
+
+
+def library(kokoro_voices=None):
+    """Chatterbox voices: the built-in one, your own clips, and copies of Kokoro's English voices."""
     meta = _read_meta()
     out = [{"id": "chatterbox:default", "name": "Chatterbox default", "gender": "female", "accent": "American",
             "english": True, "description": "Chatterbox's built-in voice"}]
+    copies = set()
+    for v in kokoro_voices or []:
+        if v[:2] in ("af", "am", "bf", "bm") and "+" not in v:
+            out.append(copy_info(v))
+            copies.add(v)
     for f in sorted(config.VOICES_DIR.glob("*.wav")):
+        if f.name.endswith(".part.wav"):
+            continue
+        if is_copy(f.stem):
+            if f.stem[len(COPY_PREFIX):] not in copies:
+                out.append(copy_info(f.stem[len(COPY_PREFIX):]))
+            continue
         m = meta.get(f.stem, {})
         out.append({"id": f"chatterbox:{f.stem}", "name": m.get("name", f.stem), "accent": "",
                     "english": True, "gender": m.get("gender", "unknown"), "description": m.get("description", "")})
@@ -109,33 +158,28 @@ def remove(key):
 
 
 def auto_cast(characters, narrator_voice, kokoro_voices):
-    """Give each character without a voice one that fits their gender and isn't taken yet.
+    """Give each character without a voice an expressive one that fits and isn't taken yet.
 
-    Your own Chatterbox voices are used first, then Kokoro voices, and when
-    both run out voices are shared.
+    Your own Chatterbox voices come first, then Chatterbox copies of Kokoro's
+    English voices. Plain Kokoro voices are never picked, as they can't act;
+    choose one by hand on the story's page if you want it. When the voices
+    run out they are shared.
     """
     taken = {narrator_voice}
     taken.update(c["voice"] for c in characters.values() if c.get("voice"))
-    lib = [v for v in library() if v["id"] != "chatterbox:default"]
-
-    def kokoro_gender(v):
-        if v.startswith(KOKORO_MALE):
-            return "male"
-        if v.startswith(KOKORO_FEMALE):
-            return "female"
-        return "unknown"
-
-    pool = [(v["id"], v["gender"], f'{v["name"]} {v["description"]}'.lower()) for v in lib]
-    pool += [(f"kokoro:{v}", kokoro_gender(v), kokoro_info(v)["accent"].lower()) for v in kokoro_voices
-             if kokoro_gender(v) != "unknown" and v[:2] in ("af", "am", "bf", "bm")]
+    lib = library(kokoro_voices)
+    own = [v for v in lib if v["id"] != "chatterbox:default" and not v.get("kokoro")]
+    copies = [v for v in lib if v.get("kokoro")]
+    pool = [(v["id"], v["gender"], f'{v["name"]} {v["description"]}'.lower()) for v in own]
+    pool += [(v["id"], v["gender"], v["accent"].lower()) for v in copies]
+    pool.append(("chatterbox:default", "female", "american"))
 
     def fit(entry, hints):
         """How well a voice matches a character's hints, like "old, British, gruff"."""
         words = set(re.findall(r"[a-z]+", hints))
         if words & BRITISH:
             words.add("british")
-        score = sum(2 for w in words if len(w) > 2 and w in entry[2])
-        return score
+        return sum(2 for w in words if len(w) > 2 and w in entry[2])
 
     # The busiest speakers get first pick
     for name, c in sorted(characters.items(), key=lambda kv: -kv[1].get("lines", 0)):
