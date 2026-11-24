@@ -13,14 +13,16 @@ Write a story for an audiobook that will be read by several voice actors. Write 
 2. Start each chapter with a line like:
    ## Chapter 1: The Light Goes Out
 
-3. Write every line of the story as:
+3. Write every line of the story as ONE line of text that starts with its tag, with the words on the same line after the tag:
    [SPEAKER | how it is said] the words
+   - Never put a tag at the end of a line, and never put a tag on a line by itself. Every tag is followed on the same line by the words it belongs to.
    - SPEAKER is NARRATOR for narration, or the character's name in capitals, spelled the same every time, for dialogue.
    - "How it is said" is one to three words of direction, like: calm, ominous / scared, whispering / very angry, shouting / warm, slightly amused / tense / sad, tired / sarcastic. Use "whispering" for anything whispered or muttered.
    - A dialogue line holds only the words the character says aloud: no quote marks, no "she said", no actions. Put actions and "she said" in a NARRATOR line instead, or leave them out.
-   - Keep each line to one to three sentences. Split long passages into several lines.
+   - Keep each line to one to three sentences. Split long passages into several tagged lines.
+   - Every line of the story has a tag, including narration.
 
-4. Lines that follow straight on from each other go on consecutive lines. Leave a blank line where a new paragraph or beat starts.
+4. Put each tagged line straight after the one before. Leave a blank line only where a new scene or beat starts.
 
 5. For a dramatic silence, put [PAUSE 2s] on its own line (any number of seconds).
 
@@ -47,6 +49,22 @@ CAST: Mira (female, child, British), Tom (male, old, Cornish, gruff but kind)
 [PAUSE 1.5s]
 [TOM | warm, slightly amused] Ships don't wait for good weather, love.
 ```
+
+## If the AI puts tags in other places
+
+Narrator copes with that too. Everything after a tag, up to the next tag, belongs to that speaker, so a tag on its own line, or at the end of the line before its words, still works:
+
+```
+[LAUREN | nervous, quiet]
+
+I still feel strange doing this. With you watching.[NARRATOR | gentle]
+
+Marcus stepped closer. He did not rush her.[MARCUS | calm]
+
+You can still leave. Door is right there.
+```
+
+What doesn't work is a tag after the words it's meant for: those words go to the speaker before.
 
 ## How the directions are read
 

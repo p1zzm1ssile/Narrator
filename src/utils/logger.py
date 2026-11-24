@@ -12,6 +12,8 @@ def setup():
     if log.handlers:
         return
     log.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+    # Libraries add their own root handler; without this every line is logged twice
+    log.propagate = False
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
     console = logging.StreamHandler()
     console.setFormatter(fmt)

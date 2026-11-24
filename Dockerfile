@@ -34,6 +34,7 @@ COPY src .
 ENV CONFIG_DIR=/config \
     HF_HOME=/config/models/huggingface \
     WEB_PORT=9895 \
+    TQDM_DISABLE=1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib

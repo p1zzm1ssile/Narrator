@@ -71,11 +71,11 @@
     <section id="tab-voices" hidden>
       <div class="card">
         <h2>Voices</h2>
-        <p class="muted">Press play to hear each voice read the same few lines. <b>Expressive</b> voices are Chatterbox, which acts out feelings and copies voices you add below. <b>Fast</b> voices are your Kokoro. The first sample of a voice takes a moment to make, then it's kept.</p>
+        <p class="muted">Press play to hear each voice read the same few lines. <b>Expressive</b> voices are Chatterbox, which acts out feelings: its own voice, voices you add below, and a copy of each of your Kokoro voices that Chatterbox acts with. Characters are always given expressive voices. <b>Fast</b> voices are plain Kokoro, which is quick but reads flatly. The first sample of a voice takes a moment to make, then it's kept.</p>
         <div class="row filters">
           <label>Search <input id="voice-search" placeholder="Name or accent"></label>
           <label>Gender <select id="voice-gender"><option value="">Any</option><option>female</option><option>male</option></select></label>
-          <label>Kind <select id="voice-kind"><option value="">Both</option><option value="chatterbox">Expressive (Chatterbox)</option><option value="kokoro">Fast (Kokoro)</option></select></label>
+          <label>Kind <select id="voice-kind"><option value="chatterbox" selected>Expressive (Chatterbox)</option><option value="kokoro">Fast (Kokoro)</option><option value="">Both</option></select></label>
           <label class="inline check"><input type="checkbox" id="voice-english" checked> English voices only</label>
         </div>
         <p id="narrator-now" class="muted"></p>

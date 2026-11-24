@@ -79,6 +79,7 @@ class Chatterbox:
         self.model = ChatterboxTTS.from_pretrained(device=wanted)
         self.device = wanted
         self.conds = {"default": self.model.conds}
+        self.last_used = time.time()
         log.info(f"Chatterbox ready in {time.time() - started:.0f}s")
 
     def unload(self):
@@ -98,9 +99,16 @@ class Chatterbox:
             log.info("Chatterbox unloaded to free the GPU")
 
     def idle_unload(self):
+        """Free the GPU when nothing has used Chatterbox for a while. Never waits on a line being rendered."""
         minutes = config.get("unload_after_minutes")
-        if self.model is not None and minutes > 0 and time.time() - self.last_used > minutes * 60:
+        if self.model is None or minutes <= 0 or time.time() - self.last_used < minutes * 60:
+            return
+        if not self.lock.acquire(blocking=False):
+            return  # busy rendering
+        try:
             self.unload()
+        finally:
+            self.lock.release()
 
     def forget_voice(self, name):
         with self.lock:
@@ -108,6 +116,7 @@ class Chatterbox:
 
     def speak(self, text, voice, p, seed=None):
         with self.lock:
+            self.last_used = time.time()
             self._load()
             import torch
             if voice not in self.conds:
