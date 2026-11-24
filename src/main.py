@@ -28,7 +28,7 @@ from core import checker, config, engines, jobs, story, tagger, voices
 from core import speakers as speakers_mod
 from utils.logger import log, setup
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 WEB_DIR = Path(__file__).parent / "web"
 PASSWORD = os.environ.get("WEB_PASSWORD", "")
@@ -53,7 +53,12 @@ async def password_check(request: Request, call_next):
             ok = secrets.compare_digest(header[7:], PASSWORD)
         if not ok:
             return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Narrator"'})
-    return await call_next(request)
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        # The page, script and styles are checked with the server on every load, so a
+        # browser never keeps showing the old page after the container is updated.
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 def _job_or_404(job_id):

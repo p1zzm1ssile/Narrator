@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- **The page updates with the container.** Browsers could keep showing the old page after an update, so new buttons were missing until a hard refresh. The page now always checks for a newer copy when it loads.
+
 ## 0.1.2
 
 - **Several clips per voice.** Add a voice from as many clips of the same person as you like, and add more later with **Add clips** on the voice. Chatterbox takes the voice's sound from the longest clip and its likeness from all of them, so 30 seconds to a minute of varied speech gives a closer copy than one short clip. Videos work as clips too: only their sound is used.
