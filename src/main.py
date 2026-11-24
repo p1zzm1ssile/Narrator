@@ -25,9 +25,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import checker, config, engines, jobs, story, tagger, voices
+from core import speakers as speakers_mod
 from utils.logger import log, setup
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 WEB_DIR = Path(__file__).parent / "web"
 PASSWORD = os.environ.get("WEB_PASSWORD", "")
@@ -172,18 +173,143 @@ def voice_sample(voice: str):
     return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "max-age=86400"})
 
 
+MAX_UPLOAD_BYTES = 4_000_000_000
+
+
+async def _save_upload(file: UploadFile, folder=None):
+    """Stream an upload to a temporary file, without holding it in memory."""
+    suffix = re.sub(r"[^.a-zA-Z0-9]", "", Path(file.filename or "clip").suffix)[:8]
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False, dir=folder)
+    size = 0
+    with tmp:
+        while chunk := await file.read(4 * 1024 * 1024):
+            size += len(chunk)
+            if size > MAX_UPLOAD_BYTES:
+                Path(tmp.name).unlink(missing_ok=True)
+                raise HTTPException(413, "That file is too big (4 GB at most)")
+            tmp.write(chunk)
+    return Path(tmp.name)
+
+
+def _voice_changed(vid):
+    key = vid.split(":", 1)[1]
+    engines.chatterbox.forget_voice(key)
+    voices.forget_sample(vid)
+
+
 @app.post("/api/voices")
 async def add_voice(name: str = Form(...), gender: str = Form("unknown"), description: str = Form(""),
-                    file: UploadFile = File(...)):
-    with tempfile.NamedTemporaryFile(suffix=Path(file.filename or "clip").suffix) as tmp:
-        tmp.write(await file.read())
-        tmp.flush()
-        try:
-            vid = voices.add(name, gender, description, tmp.name)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-    engines.chatterbox.forget_voice(vid.split(":", 1)[1])
-    voices.forget_sample(vid)
+                    files: list[UploadFile] = File(None), file: UploadFile | None = File(None)):
+    """Make a voice from one or more audio or video clips of the same person (form field files, or file)."""
+    uploads = [f for f in (files or []) + ([file] if file else []) if f and f.filename]
+    if not uploads:
+        raise HTTPException(400, "Choose at least one audio or video clip")
+    paths = [await _save_upload(f) for f in uploads]
+    try:
+        vid = voices.add(name, gender, description, paths)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        for p in paths:
+            p.unlink(missing_ok=True)
+    _voice_changed(vid)
+    return {"id": vid}
+
+
+@app.post("/api/voices/{key}/clips")
+async def add_voice_clips(key: str, files: list[UploadFile] = File(...)):
+    """Add more clips of the same person to one of your voices."""
+    paths = [await _save_upload(f) for f in files if f.filename]
+    try:
+        vid = voices.add_clips(key, paths)
+    except KeyError:
+        raise HTTPException(404, "No voice with that name")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        for p in paths:
+            p.unlink(missing_ok=True)
+    _voice_changed(vid)
+    return {"id": vid, "clips": len(voices.clip_files(key))}
+
+
+# ----- finding voices in videos and long recordings -----
+
+@app.post("/api/speakers")
+async def find_speakers(file: UploadFile = File(...), speakers: str = Form("")):
+    """Upload a video or recording; the people talking in it are found in the background."""
+    (config.CONFIG_DIR / "analysis").mkdir(parents=True, exist_ok=True)
+    path = await _save_upload(file, folder=config.CONFIG_DIR / "analysis")
+    wanted = int(speakers) if speakers.strip().isdigit() and int(speakers) > 0 else None
+    return {"id": speakers_mod.start(path, file.filename or "upload", wanted)}
+
+
+@app.get("/api/speakers/{aid}")
+def speakers_result(aid: str):
+    try:
+        return speakers_mod.get(aid)
+    except KeyError:
+        raise HTTPException(404, "Not found, or cleared after two days")
+
+
+@app.post("/api/speakers/{aid}/regroup")
+def speakers_regroup(aid: str, body: dict):
+    """Group the lines again, into a set number of speakers (or 0 to decide by itself)."""
+    try:
+        wanted = int(body.get("speakers") or 0) or None
+        return speakers_mod.regroup(aid, wanted)
+    except KeyError:
+        raise HTTPException(404, "Not found")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+def _wav(audio):
+    buf = io.BytesIO()
+    sf.write(buf, audio, engines.SAMPLE_RATE, format="WAV", subtype="PCM_16")
+    return Response(buf.getvalue(), media_type="audio/wav")
+
+
+@app.get("/api/speakers/{aid}/speaker/{n}")
+def speakers_sample(aid: str, n: int):
+    try:
+        return _wav(speakers_mod.speaker_sample(aid, n))
+    except KeyError:
+        raise HTTPException(404, "Not found")
+
+
+@app.get("/api/speakers/{aid}/line/{i}")
+def speakers_line(aid: str, i: int):
+    try:
+        seg = next(s for s in speakers_mod.get(aid)["segments"] if s["index"] == i)
+    except (KeyError, StopIteration):
+        raise HTTPException(404, "Not found")
+    return _wav(speakers_mod.audio_of(aid, seg["start"], seg["end"]))
+
+
+class MakeVoice(BaseModel):
+    lines: list[int]
+    name: str = ""
+    gender: str = "unknown"
+    description: str = ""
+    add_to: str = ""
+
+
+@app.post("/api/speakers/{aid}/voice")
+def speakers_make_voice(aid: str, body: MakeVoice):
+    """Make a voice from the chosen lines, or add them to one of your voices (add_to)."""
+    if not body.add_to and not body.name.strip():
+        raise HTTPException(400, "Give the voice a name")
+    if body.add_to and not voices.path(body.add_to):
+        raise HTTPException(404, "No voice with that name")
+    try:
+        vid = speakers_mod.make_voice(aid, body.lines, body.name, body.gender, body.description,
+                                      add_to=body.add_to or None)
+    except KeyError:
+        raise HTTPException(404, "Not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _voice_changed(vid)
     return {"id": vid}
 
 

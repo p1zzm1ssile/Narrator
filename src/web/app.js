@@ -307,14 +307,14 @@ function renderGallery() {
   $("#voice-grid").innerHTML = list.map((v) => {
     const key = v.id.split(":")[1];
     const own = v.kind === "chatterbox" && key !== "default" && !v.kokoro;
-    const meta = [voiceMeta(v), v.kind === "chatterbox" ? v.description : ""].filter(Boolean).join(" · ");
+    const meta = [voiceMeta(v), v.kind === "chatterbox" ? v.description : "", v.clips > 1 ? `${v.clips} clips` : ""].filter(Boolean).join(" · ");
     return `<div class="voice${v.id === narratorVoice ? " narrator" : ""}">
       <div class="name"><span>${esc(v.name)}</span><span class="kind ${v.kind === "chatterbox" ? "expressive" : ""}">${v.kind === "chatterbox" ? "Expressive" : "Fast"}</span></div>
       <div class="meta">${esc(meta)}${v.kind === "kokoro" ? ` <code>${esc(key)}</code>` : ""}</div>
       <div class="buttons">
         <button data-sample="${esc(v.id)}">&#9654; Play</button>
         ${v.id === narratorVoice ? `<button disabled>Narrator</button>` : `<button data-narrate="${esc(v.id)}">Use as narrator</button>`}
-        ${own ? `<button data-clip="${esc(key)}" title="The clip you uploaded">Clip</button><button class="danger" data-del="${esc(key)}">Delete</button>` : ""}
+        ${own ? `<button data-clip="${esc(key)}" title="What Chatterbox copies: your clips joined together">Clips</button><button data-add-clips="${esc(key)}" title="Add more clips of the same person">Add clips</button><button class="danger" data-del="${esc(key)}">Delete</button>` : ""}
       </div></div>`;
   }).join("") || `<p class="muted">No voices match.</p>`;
   $$("#voice-grid [data-sample]").forEach((b) => b.addEventListener("click", () => playSample(b)));
@@ -327,6 +327,7 @@ function renderGallery() {
     } catch (e) { toast(e.message); }
   }));
   $$("#voice-grid [data-clip]").forEach((b) => b.addEventListener("click", () => playUrl(`/api/voices/${b.dataset.clip}/clip`, b)));
+  $$("#voice-grid [data-add-clips]").forEach((b) => b.addEventListener("click", () => addClips(b.dataset.addClips)));
   $$("#voice-grid [data-del]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm("Delete this voice?")) return;
     await api(`/api/voices/${b.dataset.del}`, { method: "DELETE" });
@@ -377,13 +378,154 @@ function playSample(button) {
 
 $("#new-voice").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const status = $("#new-voice-status");
+  status.textContent = "Uploading and preparing the clips...";
   try {
     await api("/api/voices", { method: "POST", body: new FormData(e.target) });
     e.target.reset();
+    status.textContent = "";
     toast("Voice added");
     loadVoices();
-  } catch (err) { toast(err.message); }
+  } catch (err) { status.textContent = ""; toast(err.message); }
 });
+
+function addClips(key) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+  input.accept = "audio/*,video/*";
+  input.addEventListener("change", async () => {
+    if (!input.files.length) return;
+    const fd = new FormData();
+    [...input.files].forEach((f) => fd.append("files", f));
+    toast("Adding clips...");
+    try {
+      const r = await api(`/api/voices/${key}/clips`, { method: "POST", body: fd });
+      toast(`Added. The voice now has ${r.clips} clips`);
+      loadVoices();
+    } catch (e) { toast(e.message); }
+  });
+  input.click();
+}
+
+// ----- finding voices in a video -----
+let analysis = null;
+let analysisTimer = null;
+const chosenLines = {}; // speaker id -> Set of line indexes
+
+function clock(t) {
+  const m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+$("#find-speakers").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  $("#find-status").textContent = "Uploading...";
+  $("#speaker-results").hidden = true;
+  try {
+    const r = await api("/api/speakers", { method: "POST", body: fd });
+    e.target.reset();
+    try { localStorage.setItem("narrator-analysis", r.id); } catch (err) { /* private mode */ }
+    watchAnalysis(r.id);
+  } catch (err) { $("#find-status").textContent = err.message; }
+});
+
+function watchAnalysis(id) {
+  clearInterval(analysisTimer);
+  const tick = async () => {
+    let a;
+    try { a = await api(`/api/speakers/${id}`); } catch (e) { clearInterval(analysisTimer); $("#find-status").textContent = ""; return; }
+    $("#find-status").textContent = a.message;
+    $("#find-progress").hidden = a.status !== "working";
+    $("#find-progress").value = a.progress || 0;
+    if (a.status !== "working") {
+      clearInterval(analysisTimer);
+      if (a.status === "done") showSpeakers(a);
+    }
+  };
+  tick();
+  analysisTimer = setInterval(tick, 2000);
+}
+
+function showSpeakers(a) {
+  analysis = a;
+  for (const k of Object.keys(chosenLines)) delete chosenLines[k];
+  a.speakers.forEach((sp) => { chosenLines[sp.id] = new Set(sp.best); });
+  $("#speaker-results").hidden = false;
+  $("#regroup-count").value = a.speakers.length;
+  const own = voiceData.chatterbox.filter((v) => !v.kokoro && v.id !== "chatterbox:default");
+  $("#speaker-list").innerHTML = a.speakers.map((sp) => `
+    <div class="speaker" data-speaker="${sp.id}">
+      <div class="head">
+        <b>${esc(sp.name)}</b>
+        <span class="muted">${clock(sp.seconds)} of talking, ${sp.lines} lines</span>
+        <button data-hear-speaker="${sp.id}">&#9654; Play</button>
+        <button data-choose="${sp.id}">Make a voice from this person</button>
+      </div>
+      <div class="lines" hidden>
+        <p class="muted">The ticked lines become the voice. They start as this person's clearest lines, about 30 seconds in all. Untick any that are someone else, music, or noise.</p>
+        <table><tbody>${a.segments.filter((s) => s.speaker === sp.id).map((s) => `
+          <tr><td><input type="checkbox" data-line="${s.index}"${chosenLines[sp.id].has(s.index) ? " checked" : ""}></td>
+          <td class="time">${clock(s.start)}</td><td>${esc(s.text)}</td>
+          <td><button data-hear-line="${s.index}">&#9654;</button></td></tr>`).join("")}</tbody></table>
+        <div class="row make">
+          <label>Name <input data-field="name" placeholder="New voice name"></label>
+          <label>Gender <select data-field="gender"><option>female</option><option>male</option><option>unknown</option></select></label>
+          <label>Description <input data-field="description"></label>
+          <label>Or add to <select data-field="add_to"><option value="">A new voice</option>${own.map((v) => `<option value="${esc(v.id.split(":")[1])}">${esc(v.name)}</option>`).join("")}</select></label>
+        </div>
+        <button class="primary" data-make="${sp.id}">Make voice</button> <span class="muted" data-picked="${sp.id}"></span>
+      </div>
+    </div>`).join("") || `<p class="muted">No one was found talking.</p>`;
+  a.speakers.forEach((sp) => updatePicked(sp.id));
+  $$("#speaker-list [data-hear-speaker]").forEach((b) => b.addEventListener("click", () => playUrl(`/api/speakers/${a.id}/speaker/${b.dataset.hearSpeaker}`, b)));
+  $$("#speaker-list [data-hear-line]").forEach((b) => b.addEventListener("click", () => playUrl(`/api/speakers/${a.id}/line/${b.dataset.hearLine}`, b)));
+  $$("#speaker-list [data-choose]").forEach((b) => b.addEventListener("click", () => {
+    const box = b.closest(".speaker").querySelector(".lines");
+    box.hidden = !box.hidden;
+  }));
+  $$("#speaker-list [data-line]").forEach((c) => c.addEventListener("change", () => {
+    const sp = Number(c.closest(".speaker").dataset.speaker);
+    if (c.checked) chosenLines[sp].add(Number(c.dataset.line)); else chosenLines[sp].delete(Number(c.dataset.line));
+    updatePicked(sp);
+  }));
+  $$("#speaker-list [data-make]").forEach((b) => b.addEventListener("click", () => makeVoice(Number(b.dataset.make), b)));
+}
+
+function updatePicked(sp) {
+  const secs = analysis.segments.filter((s) => chosenLines[sp].has(s.index)).reduce((t, s) => t + s.end - s.start, 0);
+  const el = $(`[data-picked="${sp}"]`);
+  if (el) el.textContent = `${chosenLines[sp].size} lines, ${Math.round(secs)} seconds picked${secs < 15 ? " (15 to 40 works best)" : ""}`;
+}
+
+async function makeVoice(sp, button) {
+  const box = button.closest(".speaker");
+  const field = (n) => box.querySelector(`[data-field="${n}"]`).value;
+  const body = { lines: [...chosenLines[sp]], name: field("name"), gender: field("gender"), description: field("description"), add_to: field("add_to") };
+  button.disabled = true;
+  try {
+    const r = await api(`/api/speakers/${analysis.id}/voice`, json("POST", body));
+    toast(body.add_to ? "Added to the voice" : "Voice made. It's in the list above with Play");
+    await loadVoices();
+    const tile = $(`#voice-grid [data-sample="${r.id}"]`);
+    if (tile) tile.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (e) { toast(e.message); } finally { button.disabled = false; }
+}
+
+$("#regroup").addEventListener("click", async () => {
+  if (!analysis) return;
+  try {
+    const a = await api(`/api/speakers/${analysis.id}/regroup`, json("POST", { speakers: Number($("#regroup-count").value) || 0 }));
+    showSpeakers(a);
+  } catch (e) { toast(e.message); }
+});
+
+// Pick up the last search after a reload
+try {
+  const last = localStorage.getItem("narrator-analysis");
+  if (last) watchAnalysis(last);
+} catch (e) { /* private mode */ }
 
 $("#try-go").addEventListener("click", async () => {
   $("#try-status").textContent = "Rendering (the first one loads the model, which can take a minute)...";

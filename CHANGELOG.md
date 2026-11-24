@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- **Several clips per voice.** Add a voice from as many clips of the same person as you like, and add more later with **Add clips** on the voice. Chatterbox takes the voice's sound from the longest clip and its likeness from all of them, so 30 seconds to a minute of varied speech gives a closer copy than one short clip. Videos work as clips too: only their sound is used.
+- **Find voices in a video.** Upload a video or long recording (Voices > Find voices in a video). Narrator finds each person who talks, with what they say, so you can play each one, untick any lines that aren't them, and make a voice from the rest, or add the lines to a voice you already have. If it puts two people together or splits one, tell it how many people talk and press **Group again**. It runs inside the container: Whisper on the CPU finds the speech, and Chatterbox's own voice encoder tells the voices apart. The first 30 minutes of a file are used, and the sound is cleared after two days.
+
 ## 0.1.1
 
 - **Every character gets an expressive voice.** Characters used to be given plain Kokoro voices, which can't act, so stories sounded flat and robotic. Now each of your English Kokoro voices also has an expressive copy: Kokoro reads a short passage once, and Chatterbox copies that voice and acts with it. Characters are cast from your own Chatterbox voices first, then these copies, so they still each sound different and now show feeling. Plain Kokoro voices can still be picked by hand. The Voices page shows expressive voices first. Press **Read and cast again** on a story to recast it.
