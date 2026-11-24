@@ -72,3 +72,11 @@ label.check { margin-bottom: 14px; }
 .voice .buttons { display: flex; gap: 6px; flex-wrap: wrap; }
 .voice .buttons button { padding: 4px 10px; font-size: 13px; }
 .voice button.playing { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.regroup { align-items: end; margin-top: 12px; }
+.regroup button { margin-bottom: 10px; }
+.speaker { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 10px; background: var(--bg); }
+.speaker .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.speaker .head b { flex: 1; }
+.speaker table { margin-top: 8px; }
+.speaker td.time { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.speaker .make { margin-top: 10px; }

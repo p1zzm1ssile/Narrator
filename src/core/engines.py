@@ -126,6 +126,7 @@ class Chatterbox:
                     voice = "default"
                 else:
                     self.model.prepare_conditionals(str(path), exaggeration=p["exaggeration"])
+                    self._blend_clips(voice)
                     self.conds[voice] = self.model.conds
             self.model.conds = self.conds[voice]
             if seed is not None:
@@ -138,6 +139,23 @@ class Chatterbox:
             )
             self.last_used = time.time()
             return wav.squeeze(0).cpu().numpy().astype(np.float32)
+
+
+    def _blend_clips(self, voice):
+        """With several clips, take the voice's likeness from all of them equally, not just the joined file."""
+        clips = voices.clip_files(voice)
+        if len(clips) < 2:
+            return
+        import torch
+        wavs = []
+        for f in clips:
+            audio, sr = sf.read(f, dtype="float32")
+            wavs.append(resample(audio.mean(axis=1) if audio.ndim > 1 else audio, sr, 16000))
+        embeds = self.model.ve.embeds_from_wavs(wavs, sample_rate=16000)
+        spk = torch.from_numpy(self.model.ve.utt_to_spk_embed(np.asarray(embeds))).unsqueeze(0)
+        self.model.conds.t3.speaker_emb = spk.to(self.model.conds.t3.speaker_emb.device,
+                                                 dtype=self.model.conds.t3.speaker_emb.dtype)
+        log.info(f"Voice {voice}: likeness taken from {len(clips)} clips")
 
 
 class Kokoro:

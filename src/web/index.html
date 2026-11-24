@@ -96,16 +96,35 @@
       </div>
       <div class="card">
         <h2>Add a voice</h2>
-        <p class="muted">Upload 10 to 20 seconds of one person speaking clearly, with no music or background noise. Chatterbox copies the voice, and it appears above as an expressive voice. Only use voices you have the right to use.</p>
+        <p class="muted">Upload clips of one person speaking clearly, with no music or background noise. One clip of 10 to 20 seconds works; several clips (30 seconds to a minute in all, ideally with different feelings) make a closer copy. Videos work too: only their sound is used. To copy one person from a video where several people talk, use <b>Find voices in a video</b> below. Only use voices you have the right to use.</p>
         <form id="new-voice">
           <div class="row">
             <label>Name <input name="name" required></label>
             <label>Gender <select name="gender"><option>female</option><option>male</option><option>unknown</option></select></label>
             <label>Description <input name="description" placeholder="Warm, older, Scottish"></label>
           </div>
-          <label>Audio clip <input type="file" name="file" accept="audio/*,video/*" required></label>
-          <button type="submit" class="primary">Add voice</button>
+          <label>Audio or video clips <input type="file" name="files" accept="audio/*,video/*" multiple required></label>
+          <button type="submit" class="primary">Add voice</button> <span id="new-voice-status" class="muted"></span>
         </form>
+      </div>
+      <div class="card">
+        <h2>Find voices in a video</h2>
+        <p class="muted">Upload a video or a long recording, such as an interview or a film scene. Narrator finds each person who talks, so you can listen to them and make a voice from the one you want. The first 30 minutes are used, and 10 minutes of video takes about 3 to 4 minutes to go through.</p>
+        <form id="find-speakers">
+          <div class="row">
+            <label>Video or recording <input type="file" name="file" accept="video/*,audio/*" required></label>
+            <label>How many people talk? <input name="speakers" type="number" min="1" max="20" placeholder="Work it out"></label>
+          </div>
+          <button type="submit" class="primary">Find voices</button> <span id="find-status" class="muted"></span>
+          <progress id="find-progress" max="1" value="0" hidden></progress>
+        </form>
+        <div id="speaker-results" hidden>
+          <div class="row regroup">
+            <label>Not right? Group into this many people <input id="regroup-count" type="number" min="1" max="20"></label>
+            <div><button type="button" id="regroup">Group again</button></div>
+          </div>
+          <div id="speaker-list"></div>
+        </div>
       </div>
     </section>
 

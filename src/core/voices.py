@@ -123,34 +123,143 @@ def library(kokoro_voices=None):
             continue
         m = meta.get(f.stem, {})
         out.append({"id": f"chatterbox:{f.stem}", "name": m.get("name", f.stem), "accent": "",
-                    "english": True, "gender": m.get("gender", "unknown"), "description": m.get("description", "")})
+                    "english": True, "gender": m.get("gender", "unknown"), "description": m.get("description", ""),
+                    "clips": max(1, len(clip_files(f.stem)))})
     return out
 
 
-def add(name, gender, description, upload_path):
-    """Convert an uploaded clip to 24 kHz mono WAV, at most 25 seconds, and save it."""
-    key = slug(name)
-    config.VOICES_DIR.mkdir(parents=True, exist_ok=True)
+MAX_CLIP_SECONDS = 60
+MAX_REFERENCE_SECONDS = 40
+
+
+def clip_dir(key):
+    return config.VOICES_DIR / key
+
+
+def clip_files(key):
+    """The clips a voice was made from, oldest first. Voices from before 0.1.2 have none."""
+    d = clip_dir(key)
+    return sorted(d.glob("clip-*.wav")) if d.is_dir() else []
+
+
+def convert(upload_path, out, start=None, seconds=MAX_CLIP_SECONDS):
+    """Any audio or video file (or part of one) to a 24 kHz mono WAV."""
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    if start is not None:
+        cmd += ["-ss", f"{start:.3f}"]
+    cmd += ["-i", str(upload_path), "-vn", "-t", f"{seconds:.3f}", "-ac", "1", "-ar", "24000", str(out)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 or not out.exists() or out.stat().st_size < 1000:
+        out.unlink(missing_ok=True)
+        raise ValueError(f"Couldn't read audio from that file: {result.stderr.strip()[-200:] or 'no sound in it'}")
+    return out
+
+
+def _next_clip(key):
+    d = clip_dir(key)
+    d.mkdir(parents=True, exist_ok=True)
+    n = max([int(f.stem.split("-")[1]) for f in d.glob("clip-*.wav")] + [0]) + 1
+    return d / f"clip-{n:03d}.wav"
+
+
+def add_clip_audio(key, audio):
+    """Save audio (24 kHz mono float) as another clip of a voice."""
+    import soundfile as sf
+    out = _next_clip(key)
+    sf.write(out, audio, 24000, subtype="PCM_16")
+    return out
+
+
+def rebuild(key):
+    """Join a voice's clips into the one reference Chatterbox reads.
+
+    Each clip is trimmed and levelled, the longest goes first (Chatterbox
+    takes the voice's sound from the first 10 seconds), and the rest follow,
+    up to 40 seconds. Its speaker likeness is taken from every clip.
+    """
+    import numpy as np
+    import soundfile as sf
+    from core.mixer import trim
+
+    clips = clip_files(key)
+    if not clips:
+        return
+    parts = []
+    for f in clips:
+        audio, _ = sf.read(f, dtype="float32")
+        audio = trim(audio.mean(axis=1) if audio.ndim > 1 else audio)
+        rms = float(np.sqrt(np.mean(audio ** 2))) if audio.size else 0
+        if rms > 1e-4:
+            audio = np.clip(audio * (0.1 / rms), -0.99, 0.99)  # about -20 dBFS
+            parts.append(audio)
+    if not parts:
+        raise ValueError("Those clips have no sound in them")
+    parts.sort(key=len, reverse=True)
+    gap = np.zeros(int(24000 * 0.3), dtype=np.float32)
+    joined, total = [], 0
+    for a in parts:
+        if total >= MAX_REFERENCE_SECONDS * 24000:
+            break
+        joined += [a, gap]
+        total += len(a) + len(gap)
     out = config.VOICES_DIR / f"{key}.wav"
-    result = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(upload_path),
-         "-t", "25", "-ac", "1", "-ar", "24000", "-af", "silenceremove=start_periods=1:start_threshold=-45dB",
-         str(out)],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0 or not out.exists():
-        raise ValueError(f"Couldn't read that audio file: {result.stderr.strip()[-200:]}")
+    tmp = config.VOICES_DIR / f"{key}.part.wav"
+    sf.write(tmp, np.concatenate(joined)[: MAX_REFERENCE_SECONDS * 24000], 24000, subtype="PCM_16")
+    tmp.replace(out)
+
+
+def _save_meta(key, name, gender, description):
     with _lock:
         meta = _read_meta()
-        meta[key] = {"name": name.strip() or key, "gender": gender or "unknown", "description": description or ""}
+        entry = meta.setdefault(key, {})
+        entry.update({"name": (name or "").strip() or entry.get("name") or key,
+                      "gender": gender or entry.get("gender") or "unknown",
+                      "description": description if description is not None else entry.get("description", "")})
         _meta_file().write_text(json.dumps(meta, indent=2))
+
+
+def add(name, gender, description, upload_paths, key=None):
+    """Make a voice from one or more audio or video files (or add them to voice `key`). Returns its id."""
+    if isinstance(upload_paths, (str, bytes)) or hasattr(upload_paths, "__fspath__"):
+        upload_paths = [upload_paths]
+    key = key or slug(name)
+    config.VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate(key)
+    made = []
+    try:
+        for upload in upload_paths:
+            made.append(convert(upload, _next_clip(key)))
+        rebuild(key)
+    except ValueError:
+        for f in made:
+            f.unlink(missing_ok=True)
+        raise
+    _save_meta(key, name, gender, description)
     return f"chatterbox:{key}"
 
 
+def add_clips(key, upload_paths):
+    """Add more clips to an existing voice."""
+    if key not in _read_meta() and not (config.VOICES_DIR / f"{key}.wav").exists():
+        raise KeyError(key)
+    return add(_read_meta().get(key, {}).get("name", key), None, None, upload_paths, key=key)
+
+
+def _migrate(key):
+    """A voice made before clips were kept: its one file becomes its first clip."""
+    old = config.VOICES_DIR / f"{key}.wav"
+    if old.exists() and not clip_files(key):
+        import shutil
+        clip_dir(key).mkdir(parents=True, exist_ok=True)
+        shutil.copy(old, clip_dir(key) / "clip-001.wav")
+
+
 def remove(key):
-    p = path(key)
-    if p:
-        p.unlink()
+    import shutil
+    if not key or "/" in key or ".." in key:
+        return
+    (config.VOICES_DIR / f"{key}.wav").unlink(missing_ok=True)
+    shutil.rmtree(clip_dir(key), ignore_errors=True)
     with _lock:
         meta = _read_meta()
         meta.pop(key, None)

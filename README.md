@@ -15,6 +15,8 @@ It runs as one Docker container on a machine with an NVIDIA GPU, such as an Unra
 
 Characters are always cast with expressive Chatterbox voices: your own, then a Chatterbox copy of each of your English Kokoro voices. For a copy, Kokoro reads a short passage once, and Chatterbox copies that voice and acts with it. So every character can sound different and still show feeling. Plain Kokoro voices are flat, so they're only used if you pick one by hand.
 
+**Copying a voice.** Under **Add a voice**, upload one or more clips of the same person: audio or video, ideally 30 seconds to a minute in all, with no music. Chatterbox takes the voice's sound from the longest clip and its likeness from all of them. To copy one person from a video where several people talk, use **Find voices in a video**: Narrator finds each person who talks and lists their lines with a play button. Untick anything that isn't them, name the voice, and press **Make voice**. If it groups the people wrongly, set how many people talk and press **Group again**. Only copy voices you have the right to use.
+
 The **Voices** page lists every Chatterbox voice and every voice your Kokoro has, with its accent and gender. Press **Play** to hear each one read the same few lines, and **Use as narrator** on the one you like. Add your own voices there by uploading a short clip.
 
 When a story has been cast, its page lists the characters with a voice dropdown for each, and a play button to hear their first line in that voice. Every line is listed below with who says it and how they feel, so you can fix anything before pressing **Render**. Nothing needs setting up in Kokoro: give Narrator its address in Settings and it reads the voice list itself.
@@ -93,7 +95,13 @@ Everything the web UI does is in the API. With `WEB_PASSWORD` set, send it as HT
 | `GET /api/jobs/{id}/audio` | Download the audiobook |
 | `GET /api/voices` | Chatterbox and Kokoro voices, and the feelings |
 | `GET /api/voices/sample?voice=kokoro:af_bella` | A sample of a voice (WAV) |
-| `POST /api/voices` | Add a Chatterbox voice: form fields `name`, `gender`, `description`, `file` |
+| `POST /api/voices` | Add a Chatterbox voice: form fields `name`, `gender`, `description`, and one or more `files` (audio or video) |
+| `POST /api/voices/{key}/clips` | Add more `files` to a voice |
+| `POST /api/speakers` | Find the people talking in a video or recording: form fields `file`, optional `speakers` (how many). Returns an `id` |
+| `GET /api/speakers/{id}` | Progress, then `speakers` and their `segments` (start, end, text, speaker) |
+| `GET /api/speakers/{id}/speaker/{n}`, `/line/{i}` | Hear a speaker, or one line (WAV) |
+| `POST /api/speakers/{id}/regroup` | `{"speakers": 3}` groups the lines again into that many people |
+| `POST /api/speakers/{id}/voice` | `{"lines": [0, 4, 9], "name": "Inspector", "gender": "male"}` makes a voice, or `"add_to": "<voice>"` adds to one |
 | `POST /api/preview` | Speak a line: `{"text": "...", "voice": "chatterbox:default", "emotion": "angry", "intensity": 0.8}` returns a WAV |
 | `GET/PUT /api/settings` | Settings |
 
