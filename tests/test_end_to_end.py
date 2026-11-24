@@ -100,6 +100,14 @@ def test_bad_job_id(app):
     assert client.get("/api/jobs/abcdefabcdef").status_code == 404
 
 
+def test_page_is_never_stale_after_an_update(app):
+    client, _ = app
+    for path in ("/", "/app.js", "/app.css"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    assert "no-cache" not in client.get("/api/voices").headers.get("cache-control", "")
+
+
 def test_tagged_story_skips_llm_and_renders(app):
     client, calls = app
     tagged = EXAMPLE.parent / "the-lighthouse-tagged.txt"
